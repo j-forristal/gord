@@ -47,16 +47,6 @@ var (
 
 	// Error returned when failing to make a successful HTTP request (timeout, etc.)
 	ErrResponseFailure = errors.New("Unable to make successful HTTP request")
-
-	StatsRequestTimeouts uint64
-	StatsRequestErrors uint64
-	StatsRequestOK uint64
-	StatsResponseOK uint64
-	StatsResponseBadStatus uint64
-	StatsReadInterrupted uint64
-	StatsReadTimeouts uint64
-	StatsReadErrors uint64
-	StatsReadOK uint64
 )
 
 type Config struct {
@@ -76,6 +66,16 @@ type Reader struct {
 	offset 		uint64
 	config 		*Config
 	lock 		*sync.Mutex
+
+	StatsRequestTimeouts uint64
+	StatsRequestErrors uint64
+	StatsRequestOK uint64
+	StatsResponseOK uint64
+	StatsResponseBadStatus uint64
+	StatsReadInterrupted uint64
+	StatsReadTimeouts uint64
+	StatsReadErrors uint64
+	StatsReadOK uint64
 }
 
 // Create a new Reader for the specified url
@@ -113,7 +113,8 @@ func NewReaderConfig(url string, client *http.Client, config *Config) *Reader {
 	if config == nil {
 		config = &Config{}
 	}
-	return &Reader{false, url, client, nil, 0, config, &sync.Mutex{}}
+	return &Reader{false, url, client, nil, 0, config, &sync.Mutex{},
+		0,0,0,0,0,0,0,0,0}
 }
 
 func (r *Reader) resumeWithLock() error {
@@ -151,23 +152,23 @@ func (r *Reader) resumeWithLock() error {
 
 			// Timeouts are subject to retry
 			if err, ok := err.(net.Error); ok && err.Timeout() {
-				atomic.AddUint64(&StatsRequestTimeouts, 1)
+				atomic.AddUint64(&r.StatsRequestTimeouts, 1)
 				continue;
 			}
 
 			// We will consider all other errors fatal, and pass them thru
-			atomic.AddUint64(&StatsRequestErrors, 1)
+			atomic.AddUint64(&r.StatsRequestErrors, 1)
 			return err
 		}
 
-		atomic.AddUint64(&StatsRequestOK, 1)
+		atomic.AddUint64(&r.StatsRequestOK, 1)
 
 		// Check we got the right response for initial vs resumed
 		if ((r.offset == 0 && r.response.StatusCode == http.StatusOK) ||
 			(r.offset > 0 && r.response.StatusCode == http.StatusPartialContent)) {
 
 			// Everything looks good, use this response
-			atomic.AddUint64(&StatsResponseOK, 1)
+			atomic.AddUint64(&r.StatsResponseOK, 1)
 			return nil
 		}
 
@@ -175,7 +176,7 @@ func (r *Reader) resumeWithLock() error {
 
 		// Unexpected error, we can't use this response anymore
 		// TODO: expose the response code, so caller can decide to retry?
-		atomic.AddUint64(&StatsResponseBadStatus, 1)
+		atomic.AddUint64(&r.StatsResponseBadStatus, 1)
 		r.response.Body.Close()
 		r.response = nil
 		return ErrResponseStatusCode
@@ -229,23 +230,23 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 
 			// Unexpected EOF is subject to retry
 			if err == io.ErrUnexpectedEOF {
-				atomic.AddUint64(&StatsReadInterrupted, 1)
+				atomic.AddUint64(&r.StatsReadInterrupted, 1)
 				continue
 			}
 
 			// Timeouts are subject to retry
 			if err, ok := err.(net.Error); ok && err.Timeout() {
-				atomic.AddUint64(&StatsReadTimeouts, 1)
+				atomic.AddUint64(&r.StatsReadTimeouts, 1)
 				continue;
 			}
 
 			// We translate all other errors into unexpected EOF, later
-			atomic.AddUint64(&StatsReadErrors, 1)
+			atomic.AddUint64(&r.StatsReadErrors, 1)
 			r.done = true
 			break
 		}
 
-		atomic.AddUint64(&StatsReadOK, 1)
+		atomic.AddUint64(&r.StatsReadOK, 1)
 
 		// Update our read offset, for future Range resumes
 		r.offset += uint64(n)
